@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         setUpStatusItem()
 
         engine.setEntries(model.library.allEntries)
+        setUpEmoji()
         model.onChange = { [engine] library in
             engine.setEntries(library.allEntries)
         }
@@ -332,6 +333,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         pause.state = engine.isPaused ? .on : .off
         menu.addItem(pause)
 
+        let emoji = item("Emoji Suggestions", #selector(toggleEmojiSuggestions))
+        emoji.state = emojiSuggestionsEnabled ? .on : .off
+        menu.addItem(emoji)
+
         let login = item("Launch at Login", #selector(toggleLaunchAtLogin))
         login.state = launchesAtLogin ? .on : .off
         menu.addItem(login)
@@ -454,6 +459,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc private func togglePause() {
         engine.isPaused.toggle()
         updateStatusIcon()
+    }
+
+    // MARK: - Emoji suggestions
+
+    private static let emojiDisabledKey = "emojiSuggestionsDisabled"
+    private static let emojiRecentsKey = "emojiRecents"
+    private static let maxEmojiRecents = 12
+
+    private lazy var emojiPopup = EmojiPopup { [weak self] index in
+        self?.engine.chooseEmoji(at: index)
+    }
+
+    private var emojiSuggestionsEnabled: Bool {
+        get { !UserDefaults.standard.bool(forKey: Self.emojiDisabledKey) }
+        set {
+            UserDefaults.standard.set(!newValue, forKey: Self.emojiDisabledKey)
+            engine.emojiEnabled = newValue
+        }
+    }
+
+    private func setUpEmoji() {
+        engine.emojiEnabled = emojiSuggestionsEnabled
+        engine.setEmojiRecents(UserDefaults.standard.stringArray(forKey: Self.emojiRecentsKey) ?? [])
+        emojiPopup.onFrameChange = { [weak self] frame in
+            self?.engine.setEmojiPanel(visibleFrame: frame)
+        }
+        engine.onEmojiPopup = { [weak self] command in
+            self?.emojiPopup.handle(command)
+        }
+        engine.onEmojiInserted = { [weak self] emoji in
+            self?.rememberRecentEmoji(emoji)
+        }
+    }
+
+    /// Only the emoji is kept, never what was typed around it.
+    private func rememberRecentEmoji(_ emoji: Emoji) {
+        var recents = UserDefaults.standard.stringArray(forKey: Self.emojiRecentsKey) ?? []
+        recents.removeAll { $0 == emoji.character }
+        recents.insert(emoji.character, at: 0)
+        recents = Array(recents.prefix(Self.maxEmojiRecents))
+        UserDefaults.standard.set(recents, forKey: Self.emojiRecentsKey)
+        engine.setEmojiRecents(recents)
+    }
+
+    @objc private func toggleEmojiSuggestions() {
+        emojiSuggestionsEnabled.toggle()
     }
 
     // MARK: - Main menu

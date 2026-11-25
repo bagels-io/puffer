@@ -1,6 +1,13 @@
 import AppKit
 import Carbon.HIToolbox
+import os
 import PufferCore
+
+/// What the emoji popup should do. Delivered on the main thread.
+enum EmojiPopupCommand {
+    case show(matches: [Emoji], selected: Int)
+    case hide
+}
 
 /// Watches keystrokes system-wide through a `CGEventTap`, feeds them to the
 /// `Matcher`, and hands any resulting expansion to the `TextInjector`.
@@ -34,17 +41,58 @@ final class ExpansionEngine {
 
     init() {
         tapRunLoop = Self.startTapThread()
+        frontBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         observeAppState()
         keyboard = KeyboardWatcher { [weak self] state in
             self?.injector.setPasteKeyCode(state.pasteKeyCode)
             self?.onTapThread {
                 self?.inputMethodIsActive = !state.isPlainLayout
-                self?.matcher.reset()
+                self?.resetTyping()
             }
         }
     }
 
     private var keyboard: KeyboardWatcher?
+
+    // MARK: - Emoji suggestions (main-thread API)
+
+    /// Whether typing `:` and a name offers emoji.
+    var emojiEnabled = true {
+        didSet {
+            let enabled = emojiEnabled
+            onTapThread { [self] in
+                emojiOn = enabled
+                endEmojiSession()
+            }
+        }
+    }
+
+    /// Asked to show or hide the popup. Called on the main thread.
+    var onEmojiPopup: ((EmojiPopupCommand) -> Void)?
+    /// An emoji was inserted. Called on the main thread.
+    var onEmojiInserted: ((Emoji) -> Void)?
+
+    func setEmojiRecents(_ recents: [String]) {
+        onTapThread { [self] in session.recents = recents }
+    }
+
+    /// The popup's frame in global top-left coordinates while it is on
+    /// screen, nil while it is not. The popup's keys are only taken while
+    /// it is visible, so nothing is inserted that the user never saw.
+    func setEmojiPanel(visibleFrame: CGRect?) {
+        panelFrame.withLock { $0 = visibleFrame }
+    }
+
+    /// The user clicked a row of the popup.
+    func chooseEmoji(at index: Int) {
+        onTapThread { [self] in
+            guard activeInjection == nil else { return }
+            apply(session.choose(index: index))
+        }
+    }
+
+    /// Read by the tap thread, written by the main thread.
+    private let panelFrame = OSAllocatedUnfairLock<CGRect?>(initialState: nil)
 
     func setEntries(_ entries: [Entry]) {
         onTapThread { [self] in matcher.setEntries(entries) }
@@ -114,9 +162,14 @@ final class ExpansionEngine {
         let workspace = NSWorkspace.shared.notificationCenter
         workspace.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] notification in
+            let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            let bundleID = app?.bundleIdentifier
             // The user is now typing somewhere else.
-            self?.onTapThread { self?.matcher.reset() }
+            self?.onTapThread {
+                self?.frontBundleID = bundleID
+                self?.resetTyping()
+            }
         }
 
         let center = NotificationCenter.default
@@ -127,7 +180,7 @@ final class ExpansionEngine {
             center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 self?.onTapThread {
                     self?.ownAppIsActive = active
-                    self?.matcher.reset()
+                    self?.resetTyping()
                 }
             }
         }
@@ -136,6 +189,13 @@ final class ExpansionEngine {
     // MARK: - Tap thread only
 
     private var matcher = Matcher()
+    private var session = EmojiSession()
+    private var emojiOn = true
+    /// The app being typed in. Emoji suggestions are off in some apps.
+    private var frontBundleID: String?
+    /// Popup keys whose key-down was swallowed: their key-up is swallowed
+    /// too, so an app that acts on key-up never sees a lone Return.
+    private var swallowedKeyCodes: Set<Int64> = []
     private let injector = TextInjector()
     private var tap: CFMachPort?
     private var tapSource: CFRunLoopSource?
@@ -185,7 +245,7 @@ final class ExpansionEngine {
         CGEvent.tapEnable(tap: tap, enable: !paused)
         self.tap = tap
         tapSource = source
-        matcher.reset()
+        resetTyping()
         return true
     }
 
@@ -209,7 +269,7 @@ final class ExpansionEngine {
         case .tapDisabledByTimeout, .tapDisabledByUserInput:
             // macOS switches a tap off if it is ever slow; switch it back on.
             if let tap, !paused { CGEvent.tapEnable(tap: tap, enable: true) }
-            matcher.reset()
+            resetTyping()
             // An injection may still be posting. Letting the held keys go
             // now would put them ahead of it, so keep waiting for its final
             // event, but not for long: that event may have gone by while
@@ -219,8 +279,13 @@ final class ExpansionEngine {
         case .keyDown, .keyUp:
             break
         default:
-            // Any mouse click may have moved the insertion point.
-            matcher.reset()
+            // A click in the emoji popup chooses an emoji; the popup reports
+            // it through `chooseEmoji(at:)`, so the session must survive it.
+            if let frame = panelFrame.withLock({ $0 }), frame.contains(event.location) {
+                return passThrough
+            }
+            // Any other mouse click may have moved the insertion point.
+            resetTyping()
             return passThrough
         }
 
@@ -236,6 +301,11 @@ final class ExpansionEngine {
             return passThrough
         }
 
+        if type == .keyUp,
+           swallowedKeyCodes.remove(event.getIntegerValueField(.keyboardEventKeycode)) != nil {
+            return nil
+        }
+
         // While an injection is in flight, hold the user's keys back: let
         // through now, they would arrive before the expansion or be eaten
         // by its backspaces.
@@ -246,6 +316,18 @@ final class ExpansionEngine {
 
         // Key-ups are only watched so they can be held in order with key-downs.
         if type == .keyUp { return passThrough }
+
+        // Arrows, Return, Tab and Escape belong to the emoji popup while it
+        // is on screen.
+        if session.isActive, let key = Self.popupKey(for: event) {
+            restartIdleTimer()
+            let result = session.press(key, popupVisible: panelFrame.withLock { $0 } != nil)
+            apply(result.outcome)
+            if result.swallow {
+                swallowedKeyCodes.insert(event.getIntegerValueField(.keyboardEventKeycode))
+                return nil
+            }
+        }
 
         if let expansion = expansion(for: event) {
             begin(expansion)
@@ -262,14 +344,14 @@ final class ExpansionEngine {
         // shortcode field would fire), or while an input method is composing
         // the text (its raw key presses are not what ends up on the page).
         if paused || ownAppIsActive || inputMethodIsActive || IsSecureEventInputEnabled() {
-            matcher.reset()
+            resetTyping()
             return nil
         }
 
         // Command/Control combinations are shortcuts, not typing.
         let flags = event.flags
         if flags.contains(.maskCommand) || flags.contains(.maskControl) {
-            matcher.reset()
+            resetTyping()
             return nil
         }
 
@@ -279,11 +361,16 @@ final class ExpansionEngine {
         if keyCode == kVK_Delete {
             // Option-delete removes a whole word; we can't know how much.
             if flags.contains(.maskAlternate) {
-                matcher.reset()
+                resetTyping()
                 return nil
             }
             // Delete straight after an expansion: put the shortcode back.
-            return matcher.backspace()
+            if let undo = matcher.backspace() {
+                endEmojiSession()
+                return undo
+            }
+            if emojiAllowedHere { apply(session.backspace()) }
+            return nil
         }
 
         var length = 0
@@ -294,14 +381,82 @@ final class ExpansionEngine {
         // Arrows, return, tab, escape, function keys and so on produce
         // control or private-use characters (or nothing): the caret moved.
         guard !typed.isEmpty, typed.unicodeScalars.allSatisfy(Self.isTextScalar) else {
-            matcher.reset()
+            resetTyping()
             return nil
         }
 
         for character in typed {
-            if let expansion = matcher.type(character) { return expansion }
+            if let expansion = matcher.type(character) {
+                // A library shortcode wins over an emoji being looked up.
+                endEmojiSession()
+                return expansion
+            }
+            if emojiAllowedHere { apply(session.type(character)) }
         }
         return nil
+    }
+
+    // MARK: - Emoji sessions (tap thread only)
+
+    private var emojiAllowedHere: Bool {
+        emojiOn && EmojiApps.suggestionsAllowed(in: frontBundleID)
+    }
+
+    /// Forgets what was typed: the caret may have moved.
+    private func resetTyping() {
+        matcher.reset()
+        endEmojiSession()
+    }
+
+    private func endEmojiSession() {
+        apply(session.reset())
+    }
+
+    private func apply(_ outcome: EmojiSession.Outcome) {
+        switch outcome {
+        case .none:
+            break
+        case .show(let matches, let selected):
+            if matches.isEmpty {
+                hidePopup()
+            } else {
+                post(.show(matches: matches, selected: selected))
+            }
+        case .end:
+            hidePopup()
+        case .insert(let expansion, let emoji, let typed):
+            hidePopup()
+            matcher.remember(inserted: expansion.text, typed: typed)
+            begin(expansion)
+            DispatchQueue.main.async { [weak self] in self?.onEmojiInserted?(emoji) }
+        }
+    }
+
+    private func hidePopup() {
+        // Stop taking the popup's keys now, not when the main thread gets
+        // round to hiding it.
+        panelFrame.withLock { $0 = nil }
+        post(.hide)
+    }
+
+    private func post(_ command: EmojiPopupCommand) {
+        DispatchQueue.main.async { [weak self] in self?.onEmojiPopup?(command) }
+    }
+
+    private static func popupKey(for event: CGEvent) -> EmojiSession.Key? {
+        let flags = event.flags
+        if flags.contains(.maskCommand) || flags.contains(.maskControl)
+            || flags.contains(.maskAlternate) || flags.contains(.maskShift) {
+            return nil
+        }
+        switch Int(event.getIntegerValueField(.keyboardEventKeycode)) {
+        case kVK_UpArrow: return .up
+        case kVK_DownArrow: return .down
+        case kVK_Return, kVK_ANSI_KeypadEnter: return .enter
+        case kVK_Tab: return .tab
+        case kVK_Escape: return .escape
+        default: return nil
+        }
     }
 
     // MARK: - Injections in flight (tap thread only)
@@ -341,7 +496,7 @@ final class ExpansionEngine {
     private func abandonInjection() {
         activeInjection = nil
         disarmWatchdog()
-        matcher.reset()
+        resetTyping()
         let events = held
         held.removeAll()
         for event in events {
@@ -362,7 +517,7 @@ final class ExpansionEngine {
             let timer = CFRunLoopTimerCreateWithHandler(
                 kCFAllocatorDefault, CFAbsoluteTimeGetCurrent() + 1e10, 1e10, 0, 0
             ) { [weak self] _ in
-                self?.matcher.reset()
+                self?.resetTyping()
             }
             CFRunLoopAddTimer(tapRunLoop, timer, .commonModes)
             idleTimer = timer

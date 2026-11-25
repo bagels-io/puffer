@@ -119,6 +119,14 @@ public struct Matcher: Sendable {
         return nil
     }
 
+    /// Something other than a shortcode replaced `typed` with `inserted`
+    /// (an emoji picked from the popup): treat it like an expansion, so
+    /// delete straight afterwards puts `typed` back.
+    public mutating func remember(inserted: String, typed: String) {
+        reset()
+        rememberForUndo(inserted: inserted, typed: typed)
+    }
+
     private mutating func rememberForUndo(inserted: String, typed: String) {
         let count = inserted.count
         undo = count <= Self.maxUndoLength ? Undo(insertedCount: count, typed: typed) : nil
