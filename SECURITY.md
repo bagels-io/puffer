@@ -8,7 +8,7 @@ types or what is on their clipboard are especially welcome.
 
 Please report it privately through GitHub: open the repository's **Security**
 tab and choose **Report a vulnerability**
-(<https://github.com/YucaApp/puffer/security/advisories/new>). Do not open a
+(<https://github.com/bagels-io/puffer/security/advisories/new>). Do not open a
 public issue for a security problem.
 
 Include what you found, how to reproduce it, and the macOS and Puffer versions.

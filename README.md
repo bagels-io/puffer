@@ -5,7 +5,7 @@
 <h1 align="center">Puffer</h1>
 
 <p align="center">
-  <a href="https://github.com/YucaApp/puffer/actions/workflows/ci.yml"><img src="https://github.com/YucaApp/puffer/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/bagels-io/puffer/actions/workflows/ci.yml"><img src="https://github.com/bagels-io/puffer/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 </p>
 
 Text expansion for the Mac. Type a shortcode such as `;sig` in any app and
@@ -34,7 +34,7 @@ Puffer needs macOS 14 or later and runs on both Apple silicon and Intel Macs.
 ### Download
 
 1. Download `Puffer-x.y.z.dmg` from the
-   [latest release](https://github.com/YucaApp/puffer/releases/latest).
+   [latest release](https://github.com/bagels-io/puffer/releases/latest).
 2. Open it and drag Puffer into Applications.
 3. Open Puffer from Applications. Releases are not yet notarised by Apple, so
    the first time macOS will say it cannot check the app and refuse to open
@@ -60,7 +60,7 @@ This takes about a minute and needs only the Xcode Command Line Tools
 (`xcode-select --install`; full Xcode is not needed).
 
 ```sh
-git clone https://github.com/YucaApp/puffer.git
+git clone https://github.com/bagels-io/puffer.git
 cd puffer
 ./scripts/make-signing-cert.sh   # once per Mac
 ./scripts/install.sh             # builds, installs to /Applications, launches
