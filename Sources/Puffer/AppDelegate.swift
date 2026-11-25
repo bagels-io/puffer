@@ -10,6 +10,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private let model = LibraryModel()
     private let engine = ExpansionEngine()
     private var statusItem: NSStatusItem!
+    /// The Puffer menu in the main menu bar, shown while a Puffer window is
+    /// in front. It repeats the settings from the menu bar icon's menu, so
+    /// they stay reachable when the icon is hidden.
+    private var appMenu: NSMenu!
     private var editorWindow: NSWindow?
     private var permissionWindow: NSWindow?
     private var statusTimer: Timer?
@@ -245,25 +249,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     // MARK: - Menu bar item
 
+    private static let hidesMenuBarIconKey = "hidesMenuBarIcon"
+
+    private var showsMenuBarIcon: Bool {
+        get { !UserDefaults.standard.bool(forKey: Self.hidesMenuBarIconKey) }
+        set {
+            UserDefaults.standard.set(!newValue, forKey: Self.hidesMenuBarIconKey)
+            statusItem.isVisible = newValue
+        }
+    }
+
     private func setUpStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
+        statusItem.button?.image = StatusIcon.make()
+        statusItem.isVisible = showsMenuBarIcon
         updateStatusIcon()
     }
 
     private func updateStatusIcon() {
         guard let button = statusItem.button else { return }
-        let image = NSImage(systemSymbolName: "text.cursor", accessibilityDescription: "Puffer")
-        image?.isTemplate = true
-        button.image = image
         // Dimmed whenever expansions are not actually happening.
         button.appearsDisabled = engine.isPaused || !engine.isRunning || pauseReason != nil
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        if menu === appMenu {
+            buildAppMenu(menu)
+            return
+        }
 
         if !AXIsProcessTrusted() {
             menu.addItem(item("Grant Accessibility Access…", #selector(showPermissionWindow)))
@@ -282,7 +299,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
 
         menu.addItem(item("Open Puffer…", #selector(showEditor)))
+        addSettings(to: menu)
+        menu.addItem(item("Hide Menu Bar Icon…", #selector(hideMenuBarIcon)))
 
+        menu.addItem(.separator())
+        let quit = NSMenuItem(title: "Quit Puffer", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(quit)
+    }
+
+    private func buildAppMenu(_ menu: NSMenu) {
+        // Expansion is always off while this menu is open (a Puffer window
+        // is in front), so only a failure is worth reporting here.
+        if AXIsProcessTrusted(), engineFailedToStart {
+            menu.addItem(note("Not running: macOS refused keyboard access"))
+            menu.addItem(item("Try Again", #selector(retryStartingEngine)))
+            menu.addItem(.separator())
+        }
+        let icon = item("Show Menu Bar Icon", #selector(toggleMenuBarIcon))
+        icon.state = showsMenuBarIcon ? .on : .off
+        menu.addItem(icon)
+        addSettings(to: menu)
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Hide Puffer", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Quit Puffer", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+    }
+
+    /// Pause, login item and library location: in both the menu bar icon's
+    /// menu and the Puffer menu.
+    private func addSettings(to menu: NSMenu) {
         let pause = item("Pause Expansion", #selector(togglePause))
         pause.state = engine.isPaused ? .on : .off
         menu.addItem(pause)
@@ -294,10 +339,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let location = NSMenuItem(title: "Library Location", action: nil, keyEquivalent: "")
         location.submenu = makeLocationMenu()
         menu.addItem(location)
+    }
 
-        menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit Puffer", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        menu.addItem(quit)
+    @objc private func hideMenuBarIcon() {
+        let alert = NSAlert()
+        alert.messageText = "Hide Puffer’s menu bar icon?"
+        alert.informativeText = """
+        Puffer keeps running and expanding your shortcodes. To get back to it, \
+        open Puffer again from Applications or Spotlight. Its window’s Puffer \
+        menu has the same settings, and “Show Menu Bar Icon” brings the icon back.
+        """
+        alert.addButton(withTitle: "Hide Icon")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        showsMenuBarIcon = false
+    }
+
+    @objc private func toggleMenuBarIcon() {
+        showsMenuBarIcon.toggle()
     }
 
     /// A line of status text in the menu.
@@ -402,10 +462,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private func makeMainMenu() -> NSMenu {
         let main = NSMenu()
 
-        let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "Hide Puffer", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Quit Puffer", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        // Filled in by `menuNeedsUpdate`, which keeps the Command-H and
+        // Command-Q key equivalents working.
+        appMenu = NSMenu(title: "Puffer")
+        appMenu.delegate = self
+        buildAppMenu(appMenu)
         main.addItem(submenu(appMenu, title: "Puffer"))
 
         let fileMenu = NSMenu(title: "File")

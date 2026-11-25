@@ -91,6 +91,10 @@ word, so `sig` does not fire inside `design`.
 The menu bar icon is dimmed whenever expansion is not happening, and the menu
 says why. **Pause Expansion** in the same menu switches it off for a while.
 
+Don't want the icon? Choose **Hide Menu Bar Icon…**. Puffer keeps running.
+To get back to it, open Puffer again from Applications or Spotlight: its
+window's **Puffer** menu has the same settings and **Show Menu Bar Icon**.
+
 ## Privacy
 
 Puffer has to see what you type in order to spot shortcodes, so here is
