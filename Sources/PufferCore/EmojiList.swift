@@ -1,8 +1,9 @@
-// The emoji Puffer suggests, roughly most used first: a name, then up to
-// three more words each can be found by. The order breaks ties in search.
+// The everyday emoji, roughly most used first: a name, then up to
+// three more words each can be found by. They come before the rest of
+// the list (EmojiData.swift) in search, and their order breaks ties.
 
 extension EmojiCatalog {
-    public static let all: [Emoji] = [
+    public static let curated: [Emoji] = [
         Emoji("😂", "face with tears of joy", "lol", "laughing", "crying laughing"),
         Emoji("❤️", "red heart", "love", "heart"),
         Emoji("🤣", "rolling on the floor laughing", "rofl", "lmao"),

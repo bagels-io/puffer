@@ -22,6 +22,8 @@ straight after an expansion undoes it. No third-party dependencies.
 - `./scripts/install.sh` — build, install to /Applications, relaunch.
 - `./scripts/build-app.sh` — build `dist/Puffer.app` only.
 - `./scripts/make-signing-cert.sh` — once per Mac; see README.
+- `./scripts/update-emoji.sh` — regenerate `EmojiData.swift` from the latest
+  Unicode and CLDR data (needs the network; the app never does).
 - `./scripts/release.sh [version]` — build the universal disk image for a
   release. Normally run by CI when a `v*` tag is pushed.
 

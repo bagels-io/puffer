@@ -101,8 +101,9 @@ Type a colon and the start of a name, such as `:par`, and a list of
 matching emoji appears next to the cursor. Use ↑ and ↓ to pick one and
 Return or Tab to insert it, or click it. Esc closes the list. Emoji you
 used recently come first, and Delete straight afterwards puts back what
-you typed. Puffer knows about a hundred everyday emoji, each findable by a
-few words: `:party`, `:celeb` and `:conf` all find 🎉. It stays out of
+you typed. Puffer knows every standard emoji, findable by its name and by
+Unicode's keywords (`:tree` and `:forest` find 🌳), with a hundred everyday
+ones first: `:party`, `:celeb` and `:conf` all find 🎉. It stays out of
 terminals and code editors, where a colon means something else, and out of
 Slack and Discord, which have their own. **Emoji Suggestions** in the menu
 switches it off.

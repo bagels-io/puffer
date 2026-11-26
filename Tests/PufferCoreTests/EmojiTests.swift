@@ -7,14 +7,72 @@ private func characters(_ emoji: [Emoji]) -> [String] {
 }
 
 @Suite struct EmojiCatalogTests {
-    @Test func allHaveNamesAndAtMostThreeAliases() {
-        #expect(EmojiCatalog.all.count >= 100)
+    @Test func allHaveNamesAndCuratedHaveAtMostThreeAliases() {
+        #expect(EmojiCatalog.all.count > 1500)
         #expect(Set(EmojiCatalog.all.map(\.character)).count == EmojiCatalog.all.count)
         for emoji in EmojiCatalog.all {
             #expect(!emoji.name.isEmpty)
-            #expect(emoji.aliases.count <= 3, "\(emoji.character)")
             #expect(emoji.name == emoji.name.lowercased())
         }
+        for emoji in EmojiCatalog.curated {
+            #expect(emoji.aliases.count <= 3, "\(emoji.character)")
+        }
+    }
+
+    @Test func curatedComeFirstAndGainKeywords() {
+        #expect(Array(EmojiCatalog.all.prefix(EmojiCatalog.curated.count)).map(\.character)
+            == EmojiCatalog.curated.map(\.character))
+        let party = EmojiCatalog.all.first { $0.character == "🎉" }!
+        #expect(party.aliases.starts(with: ["party", "celebration", "confetti"]))
+        #expect(party.aliases.contains("tada"))
+    }
+
+    @Test func everyCuratedEmojiIsStandard() {
+        let standard = Set(EmojiDataTests.parsed.map { $0.character.filter { $0 != "\u{FE0F}" } })
+        for emoji in EmojiCatalog.curated {
+            #expect(standard.contains(emoji.character.filter { $0 != "\u{FE0F}" }), "\(emoji.character)")
+        }
+    }
+
+    @Test func findsEmojiOutsideTheCuratedList() {
+        let trees = characters(EmojiCatalog.search("tree"))
+        for tree in ["🌲", "🌳", "🎄", "🌴"] {
+            #expect(trees.contains(tree), "\(tree) in \(trees)")
+        }
+        #expect(characters(EmojiCatalog.search("forest")).contains("🌳"))
+        #expect(characters(EmojiCatalog.search("japan")).prefix(2).contains("🇯🇵"))
+        #expect(characters(EmojiCatalog.search("here")).contains("🈁"))
+    }
+
+    @Test func addedKeywordsDoNotLiftEverydayEmoji() {
+        // 😘 has Unicode's keyword "heart", but is not a heart emoji.
+        #expect(!characters(EmojiCatalog.search("heart")).contains("😘"))
+        // Still found by a keyword alone.
+        #expect(characters(EmojiCatalog.search("tada")).first == "🎉")
+    }
+
+    @Test func curatedBeatGenerated() {
+        #expect(EmojiCatalog.search("pop").first?.character == "🎉")   // not 🍿
+        #expect(EmojiCatalog.search("heart").first?.character == "❤️")  // not ♥️
+    }
+
+    @Test func nameBeatsKeyword() {
+        #expect(EmojiCatalog.search("cat").first?.character == "🐈")
+        #expect(EmojiCatalog.search("house").first?.character == "🏠")
+        #expect(["🐕", "🐶"].contains(EmojiCatalog.search("dog").first?.character))
+        #expect(EmojiCatalog.search("star").first?.character == "⭐")
+    }
+
+    @Test func recentsBeatCurated() {
+        #expect(EmojiCatalog.search("p", recents: ["🍿"]).first?.character == "🍿")
+    }
+
+    @Test func searchIsQuick() {
+        let start = Date()
+        for query in ["a", "s", "he", "tree", "japan", "qqq", "p", "cat", "smi", "fl"] {
+            for _ in 0..<10 { _ = EmojiCatalog.search(query) }
+        }
+        #expect(Date().timeIntervalSince(start) < 2)  // debug build, shared CI machines
     }
 
     @Test func matchesStartOfAnyWord() {
@@ -36,12 +94,13 @@ private func characters(_ emoji: [Emoji]) -> [String] {
     }
 
     @Test func groupsInOrder() {
-        #expect(Array(characters(EmojiCatalog.search("heart")).prefix(3)) == ["🫶", "❤️", "😍"])
+        // Whole word, then name start, then alias start, then a later word.
+        #expect(Array(characters(EmojiCatalog.search("heart")).prefix(3)) == ["❤️", "😍", "💜"])
     }
 
     @Test func recentsFirst() {
         #expect(EmojiCatalog.search("p", recents: ["🙏"]).first?.character == "🙏")
-        #expect(!EmojiCatalog.search("p", recents: ["🎂"]).contains { $0.character == "🎂" })
+        #expect(EmojiCatalog.search("qqq", recents: ["🎂"]).isEmpty)
     }
 
     @Test func limitsToSix() {
@@ -114,7 +173,8 @@ private func selection(_ outcome: EmojiSession.Outcome) -> Int? {
         #expect(firstMatch(feed(&session, ":100").last) == "💯")
 
         var other = EmojiSession()
-        #expect(feed(&other, ":3").last == .show(matches: [], selected: 0))
+        feed(&other, ":3")
+        #expect(other.isActive)
     }
 
     @Test func queryExtendsAndNarrows() {
@@ -323,5 +383,51 @@ private func selection(_ outcome: EmojiSession.Outcome) -> Int? {
             #expect(EmojiApps.suggestionsAllowed(in: id), "\(id)")
         }
         #expect(EmojiApps.suggestionsAllowed(in: nil))
+    }
+}
+
+@Suite struct EmojiDataTests {
+    static let parsed = EmojiCatalog.parse(EmojiCatalog.data)
+
+    private func find(_ character: String) -> Emoji? {
+        Self.parsed.first { $0.character == character }
+    }
+
+    @Test func coversTheStandardSet() {
+        #expect(Self.parsed.count > 1500)
+        #expect(Set(Self.parsed.map(\.character)).count == Self.parsed.count)
+    }
+
+    @Test func namesAndKeywords() {
+        let tree = find("🌳")
+        #expect(tree?.name == "deciduous tree")
+        #expect(tree?.aliases.contains("forest") == true)
+        #expect(find("🇯🇵")?.name.contains("japan") == true)
+        #expect(find("❤️‍🔥") != nil)
+        #expect(find("🧑‍💻") != nil)
+    }
+
+    @Test func noSkinTonesOrNewerThanEmoji15() {
+        let tones: ClosedRange<UInt32> = 0x1F3FB...0x1F3FF
+        #expect(!Self.parsed.contains { $0.character.unicodeScalars.contains { tones.contains($0.value) } })
+        #expect(find("🫨") != nil)   // shaking face, Emoji 15.0
+        #expect(find("🫩") == nil)   // face with bags under eyes, Emoji 16.0
+    }
+
+    @Test func lowerCaseAndNoRepeatedNameWords() {
+        for emoji in Self.parsed {
+            #expect(emoji.name == emoji.name.lowercased(), "\(emoji.character)")
+            let nameWords = Set(emoji.name.split(separator: " ").map(String.init))
+            for alias in emoji.aliases {
+                #expect(alias == alias.lowercased(), "\(emoji.character) \(alias)")
+                #expect(!nameWords.contains(alias), "\(emoji.character) \(alias)")
+            }
+        }
+    }
+
+    @Test func parsesQuickly() {
+        let start = Date()
+        for _ in 0..<10 { _ = EmojiCatalog.parse(EmojiCatalog.data) }
+        #expect(Date().timeIntervalSince(start) < 2)  // debug build, shared CI machines
     }
 }
