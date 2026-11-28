@@ -48,6 +48,8 @@ if [[ -n "${VERSION:-}" ]]; then
 fi
 # AppIcon.icns is generated from icon-source.png by scripts/make-icon.swift.
 cp Resources/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
+# The expansion sound: "Interface Sounds" by Kenney (kenney.nl), CC0.
+cp Resources/Pop.caf "$app/Contents/Resources/Pop.caf"
 
 identity="${SIGN_ID:-}"
 options=()

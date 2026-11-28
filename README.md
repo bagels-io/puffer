@@ -91,6 +91,12 @@ word, so `sig` does not fire inside `design`.
 The menu bar icon is dimmed whenever expansion is not happening, and the menu
 says why. **Pause Expansion** in the same menu switches it off for a while.
 
+The pufferfish puffs up each time something expands (not with Reduce Motion
+on). **Expansion Sound** adds a soft pop as well; it starts off. The top of
+the menu counts the keystrokes Puffer has saved you: the characters each
+expansion typed, minus the keys you pressed for it. The count stays on your
+Mac.
+
 Don't want the icon? Choose **Hide Menu Bar Icon…**. Puffer keeps running.
 To get back to it, open Puffer again from Applications or Spotlight: its
 window's **Puffer** menu has the same settings and **Show Menu Bar Icon**.
@@ -255,3 +261,6 @@ To report a security problem, see [SECURITY.md](SECURITY.md).
 ## Licence
 
 MIT. See [LICENSE](LICENSE).
+
+The expansion sound is from [Interface Sounds](https://kenney.nl/assets/interface-sounds)
+by Kenney, released under CC0.

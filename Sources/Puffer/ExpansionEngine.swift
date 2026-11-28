@@ -3,6 +3,16 @@ import Carbon.HIToolbox
 import os
 import PufferCore
 
+/// Why the engine is injecting.
+enum ExpansionKind {
+    /// A library entry's shortcode was typed.
+    case shortcode
+    /// An emoji was picked from the popup.
+    case emoji
+    /// Delete straight after an expansion put back what was typed.
+    case undo
+}
+
 /// What the emoji popup should do. Delivered on the main thread.
 enum EmojiPopupCommand {
     case show(matches: [Emoji], selected: Int)
@@ -71,6 +81,10 @@ final class ExpansionEngine {
     var onEmojiPopup: ((EmojiPopupCommand) -> Void)?
     /// An emoji was inserted. Called on the main thread.
     var onEmojiInserted: ((Emoji) -> Void)?
+    /// An injection has been handed to the injector: what it does, and
+    /// why. Called on the main thread, so whatever it does (a sound, the
+    /// icon) never holds up typing.
+    var onExpanded: ((Expansion, ExpansionKind) -> Void)?
 
     func setEmojiRecents(_ recents: [String]) {
         onTapThread { [self] in session.recents = recents }
@@ -329,8 +343,8 @@ final class ExpansionEngine {
             }
         }
 
-        if let expansion = expansion(for: event) {
-            begin(expansion)
+        if let (expansion, kind) = expansion(for: event) {
+            begin(expansion, kind)
             return nil // swallow the key that fired it; the injector types what is needed
         }
         return passThrough
@@ -338,7 +352,7 @@ final class ExpansionEngine {
 
     /// Feeds a key-down the user typed to the matcher. Returns what to
     /// inject when it completes a shortcode or undoes an expansion.
-    private func expansion(for event: CGEvent) -> Expansion? {
+    private func expansion(for event: CGEvent) -> (Expansion, ExpansionKind)? {
         // Never expand while secure input is on (password fields), while
         // paused, inside Puffer's own editor (typing a shortcode into its
         // shortcode field would fire), or while an input method is composing
@@ -367,7 +381,7 @@ final class ExpansionEngine {
             // Delete straight after an expansion: put the shortcode back.
             if let undo = matcher.backspace() {
                 endEmojiSession()
-                return undo
+                return (undo, .undo)
             }
             if emojiAllowedHere { apply(session.backspace()) }
             return nil
@@ -389,7 +403,7 @@ final class ExpansionEngine {
             if let expansion = matcher.type(character) {
                 // A library shortcode wins over an emoji being looked up.
                 endEmojiSession()
-                return expansion
+                return (expansion, .shortcode)
             }
             if emojiAllowedHere { apply(session.type(character)) }
         }
@@ -427,7 +441,7 @@ final class ExpansionEngine {
         case .insert(let expansion, let emoji, let typed):
             hidePopup()
             matcher.remember(inserted: expansion.text, typed: typed)
-            begin(expansion)
+            begin(expansion, .emoji)
             DispatchQueue.main.async { [weak self] in self?.onEmojiInserted?(emoji) }
         }
     }
@@ -461,7 +475,7 @@ final class ExpansionEngine {
 
     // MARK: - Injections in flight (tap thread only)
 
-    private func begin(_ expansion: Expansion) {
+    private func begin(_ expansion: Expansion, _ kind: ExpansionKind) {
         lastInjection += 1
         activeInjection = lastInjection
         // Far longer than an injection should take. If its final event has
@@ -471,6 +485,7 @@ final class ExpansionEngine {
         let typedEvents = Double(expansion.text.utf16.count) / Double(Typing.maxUnitsPerEvent)
         armWatchdog(after: min(6, 2 + Double(expansion.deleteCount) * 0.005 + typedEvents * 0.005))
         injector.perform(expansion, serial: lastInjection)
+        DispatchQueue.main.async { [weak self] in self?.onExpanded?(expansion, kind) }
     }
 
     /// The injection's last event has reached the tap. Replays the keys
@@ -482,8 +497,8 @@ final class ExpansionEngine {
             let event = held.removeFirst()
             // A held key can itself complete a shortcode (typing two in a
             // row quickly). The rest then stay held behind that injection.
-            if event.type == .keyDown, let expansion = expansion(for: event) {
-                begin(expansion)
+            if event.type == .keyDown, let (expansion, kind) = expansion(for: event) {
+                begin(expansion, kind)
                 return
             }
             release(event) { $0.tapPostEvent(proxy) }

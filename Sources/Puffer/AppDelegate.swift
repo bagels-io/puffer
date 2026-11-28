@@ -23,6 +23,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// True from a launch without the permission until it is first granted:
     /// that is when to open the editor and offer the login item.
     private var isFirstRun = false
+    private var iconAnimator: StatusIconAnimator!
+    private let expansionSound = ExpansionSound()
+    private var tally = AppDelegate.loadTally()
 
     // MARK: - Launch
 
@@ -32,6 +35,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
         engine.setEntries(model.library.allEntries)
         setUpEmoji()
+        engine.onExpanded = { [weak self] expansion, kind in
+            self?.expanded(expansion, kind)
+        }
         model.onChange = { [engine] library in
             engine.setEntries(library.allEntries)
         }
@@ -267,6 +273,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         statusItem.menu = menu
         statusItem.button?.image = StatusIcon.make()
         statusItem.isVisible = showsMenuBarIcon
+        iconAnimator = StatusIconAnimator(button: statusItem.button)
         updateStatusIcon()
     }
 
@@ -299,6 +306,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             menu.addItem(.separator())
         }
 
+        if let saved = tally.menuTitle(now: Date()) {
+            menu.addItem(note(saved))
+            menu.addItem(.separator())
+        }
         menu.addItem(item("Open Puffer…", #selector(showEditor)))
         addSettings(to: menu)
         menu.addItem(item("Hide Menu Bar Icon…", #selector(hideMenuBarIcon)))
@@ -336,6 +347,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let emoji = item("Emoji Suggestions", #selector(toggleEmojiSuggestions))
         emoji.state = emojiSuggestionsEnabled ? .on : .off
         menu.addItem(emoji)
+
+        let sound = item("Expansion Sound", #selector(toggleExpansionSound))
+        sound.state = expansionSoundEnabled ? .on : .off
+        menu.addItem(sound)
 
         let login = item("Launch at Login", #selector(toggleLaunchAtLogin))
         login.state = launchesAtLogin ? .on : .off
@@ -477,6 +492,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             UserDefaults.standard.set(!newValue, forKey: Self.emojiDisabledKey)
             engine.emojiEnabled = newValue
         }
+    }
+
+    // MARK: - Puff, pop and tally
+
+    private static let expansionSoundKey = "expansionSound"
+    private static let tallyKey = "keystrokeTally"
+
+    /// Off until switched on: it is heard many times an hour.
+    private var expansionSoundEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: Self.expansionSoundKey) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.expansionSoundKey) }
+    }
+
+    @objc private func toggleExpansionSound() {
+        expansionSoundEnabled.toggle()
+        if expansionSoundEnabled { expansionSound.play() }
+    }
+
+    private static func loadTally() -> KeystrokeTally {
+        guard let data = UserDefaults.standard.data(forKey: tallyKey),
+              let tally = try? JSONDecoder().decode(KeystrokeTally.self, from: data) else { return KeystrokeTally() }
+        return tally
+    }
+
+    /// Something was just injected: count it, and puff (and pop) unless it
+    /// was an undo. Passing a milestone puffs three times.
+    private func expanded(_ expansion: Expansion, _ kind: ExpansionKind) {
+        let milestone: Int?
+        switch kind {
+        case .undo:
+            tally.undid(expansion)
+            milestone = nil
+        case .shortcode, .emoji:
+            milestone = tally.expanded(expansion, at: Date())
+        }
+        if let data = try? JSONEncoder().encode(tally) {
+            UserDefaults.standard.set(data, forKey: Self.tallyKey)
+        }
+        guard kind != .undo else { return }
+        if expansionSoundEnabled { expansionSound.play() }
+        if showsMenuBarIcon { iconAnimator.puff(times: milestone == nil ? 1 : 3) }
     }
 
     private func setUpEmoji() {

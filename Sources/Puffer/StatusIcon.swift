@@ -1,13 +1,15 @@
 import AppKit
 
 /// The menu bar icon: the pufferfish from the app icon, drawn as a template
-/// image so macOS tints it for light and dark menu bars.
+/// image so macOS tints it for light and dark menu bars. It puffs up when
+/// something expands (`StatusIconAnimator`).
 enum StatusIcon {
     static let size = NSSize(width: 18, height: 18)
 
-    static func make() -> NSImage {
+    /// - Parameter puff: 0 at rest, 1 fully puffed up.
+    static func make(puff: CGFloat = 0) -> NSImage {
         let image = NSImage(size: size, flipped: false) { _ in
-            draw()
+            draw(puff: puff)
             return true
         }
         image.isTemplate = true
@@ -15,10 +17,13 @@ enum StatusIcon {
         return image
     }
 
-    /// Draws in an 18 × 18 point box, origin bottom left.
-    static func draw() {
+    /// Draws in an 18 × 18 point box, origin bottom left. Puffed up, the
+    /// body and spikes grow and the fins move out with the body; it all
+    /// still fits the box.
+    static func draw(puff: CGFloat = 0) {
+        let puff = min(max(puff, 0), 1)
         let center = NSPoint(x: 9, y: 8.6)
-        let radius: CGFloat = 5.2
+        let radius: CGFloat = 5.2 + 0.8 * puff
 
         NSColor.black.setFill()
 
@@ -34,7 +39,7 @@ enum StatusIcon {
             let direction = CGVector(dx: cos(angle), dy: sin(angle))
             let across = CGVector(dx: -direction.dy, dy: direction.dx)
             let base = point(center, direction, radius - 0.5)
-            let tip = point(center, direction, radius + 1.9)
+            let tip = point(center, direction, radius + 1.9 + 0.7 * puff)
             let spike = NSBezierPath()
             spike.move(to: point(base, across, 1.0))
             spike.line(to: tip)
@@ -58,7 +63,8 @@ enum StatusIcon {
                 let angle = (facing + rib) * .pi / 180
                 let direction = CGVector(dx: cos(angle), dy: sin(angle))
                 let line = NSBezierPath()
-                line.move(to: point(root, direction, radius - 3.6 + 1.6))
+                // From the resting radius, so the ribs stay as long when puffed.
+                line.move(to: point(root, direction, 5.2 - 3.6 + 1.6))
                 line.line(to: point(root, direction, 4.5))
                 line.lineWidth = 0.55
                 NSColor.black.setStroke()
